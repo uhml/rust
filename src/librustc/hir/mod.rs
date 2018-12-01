@@ -85,6 +85,8 @@ pub struct HirId {
     pub local_id: ItemLocalId,
 }
 
+impl_defer_dellocs_for_no_drop_type!([] HirId);
+
 impl HirId {
     pub fn owner_def_id(self) -> DefId {
         DefId::local(self.owner)
@@ -134,6 +136,8 @@ mod item_local_id_inner {
         pub struct ItemLocalId { .. }
     }
 }
+
+impl_defer_dellocs_for_no_drop_type!([] ItemLocalId);
 
 pub use self::item_local_id_inner::ItemLocalId;
 
@@ -1268,6 +1272,8 @@ pub enum UnsafeSource {
 pub struct BodyId {
     pub node_id: NodeId,
 }
+
+impl_defer_dellocs_for_no_drop_type!([] BodyId);
 
 /// The body of a function, closure, or constant value. In the case of
 /// a function, the body contains not only the function body itself

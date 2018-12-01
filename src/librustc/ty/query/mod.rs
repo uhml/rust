@@ -45,7 +45,7 @@ use traits::query::normalize::NormalizationResult;
 use traits::query::outlives_bounds::OutlivesBound;
 use traits::specialization_graph;
 use traits::Clauses;
-use ty::{self, CrateInherentImpls, ParamEnvAnd, Ty, TyCtxt};
+use ty::{self, CrateInherentImpls, ParamEnvAnd, Ty, TyCtxt, Bx};
 use ty::steal::Steal;
 use ty::subst::Substs;
 use util::nodemap::{DefIdSet, DefIdMap, ItemLocalSet};
@@ -142,7 +142,7 @@ define_queries! { <'tcx>
 
         /// Returns the inferred outlives predicates (e.g., for `struct
         /// Foo<'a, T> { x: &'a T }`, this would return `T: 'a`).
-        [] fn inferred_outlives_of: InferredOutlivesOf(DefId) -> Lrc<Vec<ty::Predicate<'tcx>>>,
+        [] fn inferred_outlives_of: InferredOutlivesOf(DefId) -> &'tcx [ty::Predicate<'tcx>],
 
         /// Maps from the def-id of a trait to the list of
         /// super-predicates. This is a subset of the full list of
@@ -188,11 +188,11 @@ define_queries! { <'tcx>
 
         /// Get a map with the variance of every item; use `item_variance`
         /// instead.
-        [] fn crate_variances: crate_variances(CrateNum) -> Lrc<ty::CrateVariancesMap>,
+        [] fn crate_variances: crate_variances(CrateNum) -> Lrc<ty::CrateVariancesMap<'tcx>>,
 
         /// Maps from def-id of a type or region parameter to its
         /// (inferred) variance.
-        [] fn variances_of: ItemVariances(DefId) -> Lrc<Vec<ty::Variance>>,
+        [] fn variances_of: ItemVariances(DefId) -> &'tcx [ty::Variance],
     },
 
     TypeChecking {
@@ -203,7 +203,7 @@ define_queries! { <'tcx>
 
     Other {
         /// Maps from an impl/trait def-id to a list of the def-ids of its items
-        [] fn associated_item_def_ids: AssociatedItemDefIds(DefId) -> Lrc<Vec<DefId>>,
+        [] fn associated_item_def_ids: AssociatedItemDefIds(DefId) -> &'tcx [DefId],
 
         /// Maps from a trait item to the trait item "descriptor"
         [] fn associated_item: AssociatedItems(DefId) -> ty::AssociatedItem,
@@ -216,19 +216,19 @@ define_queries! { <'tcx>
         /// Maps a DefId of a type to a list of its inherent impls.
         /// Contains implementations of methods that are inherent to a type.
         /// Methods in these implementations don't need to be exported.
-        [] fn inherent_impls: InherentImpls(DefId) -> Lrc<Vec<DefId>>,
+        [] fn inherent_impls: InherentImpls(DefId) -> &'tcx [DefId],
     },
 
     Codegen {
         /// Set of all the def-ids in this crate that have MIR associated with
         /// them. This includes all the body owners, but also things like struct
         /// constructors.
-        [] fn mir_keys: mir_keys(CrateNum) -> Lrc<DefIdSet>,
+        [] fn mir_keys: mir_keys(CrateNum) -> &'tcx DefIdSet,
 
         /// Maps DefId's that have an associated Mir to the result
         /// of the MIR qualify_consts pass. The actual meaning of
         /// the value isn't known except to the pass itself.
-        [] fn mir_const_qualif: MirConstQualif(DefId) -> (u8, Lrc<BitSet<mir::Local>>),
+        [] fn mir_const_qualif: MirConstQualif(DefId) -> (u8, Bx<'tcx, BitSet<mir::Local>>),
 
         /// Fetch the MIR for a given def-id right after it's built - this includes
         /// unreachable code.
@@ -271,7 +271,7 @@ define_queries! { <'tcx>
     },
 
     Other {
-        [] fn used_trait_imports: UsedTraitImports(DefId) -> Lrc<DefIdSet>,
+        [] fn used_trait_imports: UsedTraitImports(DefId) -> Bx<'tcx, DefIdSet>,
     },
 
     TypeChecking {
@@ -281,7 +281,7 @@ define_queries! { <'tcx>
     },
 
     BorrowChecking {
-        [] fn borrowck: BorrowCheck(DefId) -> Lrc<BorrowCheckResult>,
+        [] fn borrowck: BorrowCheck(DefId) -> Bx<'tcx, BorrowCheckResult>,
 
         /// Borrow checks the function body. If this is a closure, returns
         /// additional requirements that the closure's creator must verify.
@@ -293,7 +293,7 @@ define_queries! { <'tcx>
         /// Not meant to be used directly outside of coherence.
         /// (Defined only for LOCAL_CRATE)
         [] fn crate_inherent_impls: crate_inherent_impls_dep_node(CrateNum)
-            -> Lrc<CrateInherentImpls>,
+            -> &'tcx CrateInherentImpls,
 
         /// Checks all types in the krate for overlap in their inherent impls. Reports errors.
         /// Not meant to be used directly outside of coherence.
@@ -330,7 +330,7 @@ define_queries! { <'tcx>
 
         /// Per-body `region::ScopeTree`. The `DefId` should be the owner-def-id for the body;
         /// in the case of closures, this will be redirected to the enclosing function.
-        [] fn region_scope_tree: RegionScopeTree(DefId) -> Lrc<region::ScopeTree>,
+        [] fn region_scope_tree: RegionScopeTree(DefId) -> &'tcx region::ScopeTree,
 
         [] fn mir_shims: mir_shim_dep_node(ty::InstanceDef<'tcx>) -> &'tcx mir::Mir<'tcx>,
 
@@ -359,7 +359,7 @@ define_queries! { <'tcx>
     TypeChecking {
         [] fn trait_of_item: TraitOfItem(DefId) -> Option<DefId>,
         [] fn const_is_rvalue_promotable_to_static: ConstIsRvaluePromotableToStatic(DefId) -> bool,
-        [] fn rvalue_promotable_map: RvaluePromotableMap(DefId) -> Lrc<ItemLocalSet>,
+        [] fn rvalue_promotable_map: RvaluePromotableMap(DefId) -> &'tcx ItemLocalSet,
     },
 
     Codegen {
@@ -368,7 +368,7 @@ define_queries! { <'tcx>
 
     Other {
         [] fn vtable_methods: vtable_methods_node(ty::PolyTraitRef<'tcx>)
-                            -> Lrc<Vec<Option<(DefId, &'tcx Substs<'tcx>)>>>,
+                            -> &'tcx [Option<(DefId, &'tcx Substs<'tcx>)>],
     },
 
     Codegen {
@@ -377,9 +377,9 @@ define_queries! { <'tcx>
     },
 
     TypeChecking {
-        [] fn trait_impls_of: TraitImpls(DefId) -> Lrc<ty::trait_def::TraitImpls>,
+        [] fn trait_impls_of: TraitImpls(DefId) -> Bx<'tcx, ty::trait_def::TraitImpls>,
         [] fn specialization_graph_of: SpecializationGraph(DefId)
-            -> Lrc<specialization_graph::Graph>,
+            -> Bx<'tcx, specialization_graph::Graph>,
         [] fn is_object_safe: ObjectSafety(DefId) -> bool,
 
         /// Get the ParameterEnvironment for a given item; this environment
@@ -427,7 +427,7 @@ define_queries! { <'tcx>
 
     Other {
         [] fn module_exports: ModuleExports(DefId) -> Option<Lrc<Vec<Export>>>,
-        [] fn lint_levels: lint_levels_node(CrateNum) -> Lrc<lint::LintLevelMap>,
+        [] fn lint_levels: lint_levels_node(CrateNum) -> Bx<'tcx, lint::LintLevelMap>,
     },
 
     TypeChecking {
@@ -459,9 +459,9 @@ define_queries! { <'tcx>
 
     Codegen {
         [] fn upstream_monomorphizations: UpstreamMonomorphizations(CrateNum)
-            -> Lrc<DefIdMap<Lrc<FxHashMap<&'tcx Substs<'tcx>, CrateNum>>>>,
+            -> Bx<'tcx, DefIdMap<Bx<'tcx, FxHashMap<&'tcx Substs<'tcx>, CrateNum>>>>,
         [] fn upstream_monomorphizations_for: UpstreamMonomorphizationsFor(DefId)
-            -> Option<Lrc<FxHashMap<&'tcx Substs<'tcx>, CrateNum>>>,
+            -> Option<Bx<'tcx, FxHashMap<&'tcx Substs<'tcx>, CrateNum>>>,
     },
 
     Other {
@@ -479,9 +479,9 @@ define_queries! { <'tcx>
 
     TypeChecking {
         [] fn implementations_of_trait: implementations_of_trait_node((CrateNum, DefId))
-            -> Lrc<Vec<DefId>>,
+            -> Bx<'tcx, [DefId]>,
         [] fn all_trait_implementations: AllTraitImplementations(CrateNum)
-            -> Lrc<Vec<DefId>>,
+            -> Bx<'tcx, [DefId]>,
     },
 
     Other {
@@ -499,13 +499,13 @@ define_queries! { <'tcx>
 
     BorrowChecking {
         // Lifetime resolution. See `middle::resolve_lifetimes`.
-        [] fn resolve_lifetimes: ResolveLifetimes(CrateNum) -> Lrc<ResolveLifetimes>,
+        [] fn resolve_lifetimes: ResolveLifetimes(CrateNum) -> Bx<'tcx, ResolveLifetimes>,
         [] fn named_region_map: NamedRegion(DefIndex) ->
-            Option<Lrc<FxHashMap<ItemLocalId, Region>>>,
+            Option<Bx<'tcx, FxHashMap<ItemLocalId, Region>>>,
         [] fn is_late_bound_map: IsLateBound(DefIndex) ->
-            Option<Lrc<FxHashSet<ItemLocalId>>>,
+            Option<Bx<'tcx, FxHashSet<ItemLocalId>>>,
         [] fn object_lifetime_defaults_map: ObjectLifetimeDefaults(DefIndex)
-            -> Option<Lrc<FxHashMap<ItemLocalId, Lrc<Vec<ObjectLifetimeDefault>>>>>,
+            -> Option<Bx<'tcx, FxHashMap<ItemLocalId, Vec<ObjectLifetimeDefault>>>>,
     },
 
     TypeChecking {
@@ -515,7 +515,7 @@ define_queries! { <'tcx>
     Other {
         [] fn dep_kind: DepKind(CrateNum) -> DepKind,
         [] fn crate_name: CrateName(CrateNum) -> Symbol,
-        [] fn item_children: ItemChildren(DefId) -> Lrc<Vec<Export>>,
+        [] fn item_children: ItemChildren(DefId) -> Bx<'tcx, [Export]>,
         [] fn extern_mod_stmt_cnum: ExternModStmtCnum(DefId) -> Option<CrateNum>,
 
         [] fn get_lib_features: get_lib_features_node(CrateNum) -> Lrc<LibFeatures>,
@@ -535,13 +535,13 @@ define_queries! { <'tcx>
         [] fn maybe_unused_extern_crates: maybe_unused_extern_crates_node(CrateNum)
             -> Lrc<Vec<(DefId, Span)>>,
 
-        [] fn stability_index: stability_index_node(CrateNum) -> Lrc<stability::Index<'tcx>>,
-        [] fn all_crate_nums: all_crate_nums_node(CrateNum) -> Lrc<Vec<CrateNum>>,
+        [] fn stability_index: stability_index_node(CrateNum) -> Bx<'tcx, stability::Index<'tcx>>,
+        [] fn all_crate_nums: all_crate_nums_node(CrateNum) -> Bx<'tcx, [CrateNum]>,
 
         /// A vector of every trait accessible in the whole crate
         /// (i.e. including those from subcrates). This is used only for
         /// error reporting.
-        [] fn all_traits: all_traits_node(CrateNum) -> Lrc<Vec<DefId>>,
+        [] fn all_traits: all_traits_node(CrateNum) -> Bx<'tcx, [DefId]>,
     },
 
     Linking {
@@ -572,7 +572,7 @@ define_queries! { <'tcx>
         [] fn normalize_projection_ty: NormalizeProjectionTy(
             CanonicalProjectionGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, NormalizationResult<'tcx>>>>,
+            Bx<'tcx, Canonical<'tcx, canonical::QueryResponse<'tcx, NormalizationResult<'tcx>>>>,
             NoSolution,
         >,
 
@@ -584,7 +584,7 @@ define_queries! { <'tcx>
         [] fn implied_outlives_bounds: ImpliedOutlivesBounds(
             CanonicalTyGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, Vec<OutlivesBound<'tcx>>>>>,
+            Bx<'tcx, Canonical<'tcx, canonical::QueryResponse<'tcx, Vec<OutlivesBound<'tcx>>>>>,
             NoSolution,
         >,
 
@@ -592,7 +592,7 @@ define_queries! { <'tcx>
         [] fn dropck_outlives: DropckOutlives(
             CanonicalTyGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, DropckOutlivesResult<'tcx>>>>,
+            Bx<'tcx, Canonical<'tcx, canonical::QueryResponse<'tcx, DropckOutlivesResult<'tcx>>>>,
             NoSolution,
         >,
 
@@ -606,7 +606,7 @@ define_queries! { <'tcx>
         [] fn type_op_ascribe_user_type: TypeOpAscribeUserType(
             CanonicalTypeOpAscribeUserTypeGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
+            Bx<'tcx, Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
             NoSolution,
         >,
 
@@ -614,7 +614,7 @@ define_queries! { <'tcx>
         [] fn type_op_eq: TypeOpEq(
             CanonicalTypeOpEqGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
+            Bx<'tcx, Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
             NoSolution,
         >,
 
@@ -622,7 +622,7 @@ define_queries! { <'tcx>
         [] fn type_op_subtype: TypeOpSubtype(
             CanonicalTypeOpSubtypeGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
+            Bx<'tcx, Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
             NoSolution,
         >,
 
@@ -630,7 +630,7 @@ define_queries! { <'tcx>
         [] fn type_op_prove_predicate: TypeOpProvePredicate(
             CanonicalTypeOpProvePredicateGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
+            Bx<'tcx, Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
             NoSolution,
         >,
 
@@ -638,7 +638,7 @@ define_queries! { <'tcx>
         [] fn type_op_normalize_ty: TypeOpNormalizeTy(
             CanonicalTypeOpNormalizeGoal<'tcx, Ty<'tcx>>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, Ty<'tcx>>>>,
+            Bx<'tcx, Canonical<'tcx, canonical::QueryResponse<'tcx, Ty<'tcx>>>>,
             NoSolution,
         >,
 
@@ -646,7 +646,7 @@ define_queries! { <'tcx>
         [] fn type_op_normalize_predicate: TypeOpNormalizePredicate(
             CanonicalTypeOpNormalizeGoal<'tcx, ty::Predicate<'tcx>>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ty::Predicate<'tcx>>>>,
+            Bx<'tcx, Canonical<'tcx, canonical::QueryResponse<'tcx, ty::Predicate<'tcx>>>>,
             NoSolution,
         >,
 
@@ -654,7 +654,7 @@ define_queries! { <'tcx>
         [] fn type_op_normalize_poly_fn_sig: TypeOpNormalizePolyFnSig(
             CanonicalTypeOpNormalizeGoal<'tcx, ty::PolyFnSig<'tcx>>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ty::PolyFnSig<'tcx>>>>,
+            Bx<'tcx, Canonical<'tcx, canonical::QueryResponse<'tcx, ty::PolyFnSig<'tcx>>>>,
             NoSolution,
         >,
 
@@ -662,7 +662,7 @@ define_queries! { <'tcx>
         [] fn type_op_normalize_fn_sig: TypeOpNormalizeFnSig(
             CanonicalTypeOpNormalizeGoal<'tcx, ty::FnSig<'tcx>>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ty::FnSig<'tcx>>>>,
+            Bx<'tcx, Canonical<'tcx, canonical::QueryResponse<'tcx, ty::FnSig<'tcx>>>>,
             NoSolution,
         >,
 
@@ -678,7 +678,7 @@ define_queries! { <'tcx>
         [] fn instance_def_size_estimate: instance_def_size_estimate_dep_node(ty::InstanceDef<'tcx>)
             -> usize,
 
-        [] fn features_query: features_node(CrateNum) -> Lrc<feature_gate::Features>,
+        [] fn features_query: features_node(CrateNum) -> Bx<'tcx, feature_gate::Features>,
     },
 
     TypeChecking {

@@ -847,16 +847,12 @@ impl_stable_hash_for!(struct ty::Destructor {
     did
 });
 
-impl_stable_hash_for!(struct ty::CrateVariancesMap {
+impl_stable_hash_for!(struct ty::CrateVariancesMap<'tcx> {
     variances,
-    // This is just an irrelevant helper value.
-    empty_variance -> _,
 });
 
 impl_stable_hash_for!(struct ty::CratePredicatesMap<'tcx> {
     predicates,
-    // This is just an irrelevant helper value.
-    empty_predicate -> _,
 });
 
 impl_stable_hash_for!(struct ty::AssociatedItem {
@@ -1232,6 +1228,15 @@ impl<'a, 'tcx> HashStable<StableHashingContext<'a>> for traits::Clause<'tcx> {
             Implies(clause) => clause.hash_stable(hcx, hasher),
             ForAll(clause) => clause.hash_stable(hcx, hasher),
         }
+    }
+}
+
+impl<'a, 'tcx, T: ?Sized> HashStable<StableHashingContext<'a>> for ty::util::Bx<'tcx, T>
+where T: HashStable<StableHashingContext<'a>> {
+    fn hash_stable<W: StableHasherResult>(&self,
+                                          hcx: &mut StableHashingContext<'a>,
+                                          hasher: &mut StableHasher<W>) {
+        self.0.hash_stable(hcx, hasher);
     }
 }
 

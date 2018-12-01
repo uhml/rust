@@ -38,7 +38,7 @@ use ty::ReprOptions;
 use traits;
 use traits::{Clause, Clauses, GoalKind, Goal, Goals};
 use ty::{self, Ty, TypeAndMut};
-use ty::{TyS, TyKind, List};
+use ty::{Bx, TyS, TyKind, List};
 use ty::{AdtKind, AdtDef, ClosureSubsts, GeneratorSubsts, Region, Const};
 use ty::{PolyFnSig, InferTy, ParamTy, ProjectionTy, ExistentialPredicate, Predicate};
 use ty::RegionKind;
@@ -55,6 +55,7 @@ use util::nodemap::{DefIdMap, DefIdSet, ItemLocalMap};
 use util::nodemap::{FxHashMap, FxHashSet};
 use rustc_data_structures::interner::HashInterner;
 use smallvec::SmallVec;
+use rustc_data_structures::defer_deallocs::DeferDeallocs;
 use rustc_data_structures::stable_hasher::{HashStable, hash_stable_hashmap,
                                            StableHasher, StableHasherResult,
                                            StableVec};
@@ -92,7 +93,7 @@ impl<'tcx> AllArenas<'tcx> {
     pub fn new() -> Self {
         AllArenas {
             global: WorkerLocal::new(|_| GlobalArenas::default()),
-            interner: SyncDroplessArena::default(),
+            interner: SyncDroplessArena::new(),
         }
     }
 }
@@ -971,6 +972,26 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
+    #[inline(always)]
+    pub fn promote<T: DeferDeallocs>(&self, object: T) -> &'gcx T {
+        self.gcx.global_interners.arena.promote(object)
+    }
+
+    #[inline(always)]
+    pub fn promote_vec<T: DeferDeallocs>(&self, vec: Vec<T>) -> &'gcx [T] {
+        self.gcx.global_interners.arena.promote_vec(vec)
+    }
+
+    #[inline(always)]
+    pub fn bx<T: DeferDeallocs>(&self, object: T) -> Bx<'gcx, T> {
+        Bx(self.promote(object))
+    }
+
+    #[inline(always)]
+    pub fn bx_vec<T: DeferDeallocs>(&self, vec: Vec<T>) -> Bx<'gcx, [T]> {
+        Bx(self.promote_vec(vec))
+    }
+
     pub fn alloc_generics(self, generics: ty::Generics) -> &'gcx ty::Generics {
         self.global_arenas.generics.alloc(generics)
     }
@@ -1258,16 +1279,16 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         else { None }
     }
 
-    pub fn stability(self) -> Lrc<stability::Index<'tcx>> {
-        self.stability_index(LOCAL_CRATE)
+    pub fn stability(self) -> &'gcx stability::Index<'tcx> {
+        self.stability_index(LOCAL_CRATE).0
     }
 
-    pub fn crates(self) -> Lrc<Vec<CrateNum>> {
-        self.all_crate_nums(LOCAL_CRATE)
+    pub fn crates(self) -> &'gcx [CrateNum] {
+        self.all_crate_nums(LOCAL_CRATE).0
     }
 
-    pub fn features(self) -> Lrc<feature_gate::Features> {
-        self.features_query(LOCAL_CRATE)
+    pub fn features(self) -> &'gcx feature_gate::Features {
+        self.features_query(LOCAL_CRATE).0
     }
 
     pub fn def_key(self, id: DefId) -> hir_map::DefKey {
@@ -2961,10 +2982,10 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     }
 
     pub fn object_lifetime_defaults(self, id: HirId)
-        -> Option<Lrc<Vec<ObjectLifetimeDefault>>>
+        -> Option<&'gcx [ObjectLifetimeDefault]>
     {
         self.object_lifetime_defaults_map(id.owner)
-            .and_then(|map| map.get(&id.local_id).cloned())
+            .and_then(|map| map.0.get(&id.local_id).map(|v| &**v))
     }
 }
 
@@ -3041,7 +3062,7 @@ pub fn provide(providers: &mut ty::query::Providers<'_>) {
 
     providers.stability_index = |tcx, cnum| {
         assert_eq!(cnum, LOCAL_CRATE);
-        Lrc::new(stability::Index::new(tcx))
+        tcx.bx(stability::Index::new(tcx))
     };
     providers.lookup_stability = |tcx, id| {
         assert_eq!(id.krate, LOCAL_CRATE);
@@ -3059,7 +3080,7 @@ pub fn provide(providers: &mut ty::query::Providers<'_>) {
     };
     providers.all_crate_nums = |tcx, cnum| {
         assert_eq!(cnum, LOCAL_CRATE);
-        Lrc::new(tcx.cstore.crates_untracked())
+        tcx.bx_vec(tcx.cstore.crates_untracked())
     };
     providers.postorder_cnums = |tcx, cnum| {
         assert_eq!(cnum, LOCAL_CRATE);
@@ -3071,7 +3092,7 @@ pub fn provide(providers: &mut ty::query::Providers<'_>) {
     };
     providers.features_query = |tcx, cnum| {
         assert_eq!(cnum, LOCAL_CRATE);
-        Lrc::new(tcx.sess.features_untracked().clone())
+        tcx.bx(tcx.sess.features_untracked().clone())
     };
     providers.is_panic_runtime = |tcx, cnum| {
         assert_eq!(cnum, LOCAL_CRATE);

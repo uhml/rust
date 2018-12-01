@@ -35,6 +35,8 @@ pub enum CrateNum {
     Index(CrateId),
 }
 
+impl_defer_dellocs_for_no_drop_type!([] CrateNum);
+
 impl ::std::fmt::Debug for CrateNum {
     fn fmt(&self, fmt: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match self {
@@ -223,6 +225,8 @@ pub struct DefId {
     pub index: DefIndex,
 }
 
+impl_defer_dellocs_for_no_drop_type!([] DefId);
+
 impl fmt::Debug for DefId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "DefId({}/{}:{}",
@@ -270,6 +274,8 @@ impl serialize::UseSpecializedDecodable for DefId {}
 /// is when LocalDefId comes in handy.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LocalDefId(DefIndex);
+
+impl_defer_dellocs_for_no_drop_type!([] LocalDefId);
 
 impl LocalDefId {
     #[inline]

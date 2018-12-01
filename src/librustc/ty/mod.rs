@@ -57,6 +57,7 @@ use syntax::symbol::{keywords, Symbol, LocalInternedString, InternedString};
 use syntax_pos::{DUMMY_SP, Span};
 
 use smallvec;
+use rustc_data_structures::defer_deallocs::{DeferredDeallocs, DeferDeallocs};
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 use rustc_data_structures::stable_hasher::{StableHasher, StableHasherResult,
                                            HashStable};
@@ -90,6 +91,8 @@ pub use self::trait_def::TraitDef;
 
 pub use self::query::queries;
 
+pub use self::util::Bx;
+
 pub mod adjustment;
 pub mod binding;
 pub mod cast;
@@ -119,6 +122,36 @@ mod flags;
 mod instance;
 mod structural_impls;
 mod sty;
+
+#[no_mangle]
+pub fn test1<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>, vec: Vec<u32>) -> Bx<'tcx, [u32]> {
+    tcx.bx_vec(vec)
+}
+
+#[no_mangle]
+pub fn test2<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) -> Bx<'tcx, u32> {
+    tcx.bx(45)
+}
+
+#[no_mangle]
+pub fn test3<'tcx>(
+    allocs: &mut DeferredDeallocs, ptr: std::ptr::NonNull<u8>,
+    layout: std::alloc::Layout) {
+    allocs.add(ptr, layout);
+}
+
+#[no_mangle]
+pub fn test4<'tcx>(
+    allocs: &mut DeferredDeallocs, vec: Vec<u32>) {
+    vec.defer(allocs);
+}
+
+#[no_mangle]
+pub fn test5<'tcx>(
+    allocs: &rustc_data_structures::sync::WorkerLocal<RefCell<DeferredDeallocs>>,
+    vec: &Vec<u32>) {
+    vec.defer(&mut *allocs.borrow_mut());
+}
 
 // Data types
 
@@ -338,20 +371,19 @@ pub enum Variance {
     Bivariant,      // T<A> <: T<B>            -- e.g., unused type parameter
 }
 
+impl_defer_dellocs_for_no_drop_type!([] Variance);
+
 /// The crate variances map is computed during typeck and contains the
 /// variance of every item in the local crate. You should not use it
 /// directly, because to do so will make your pass dependent on the
 /// HIR of every item in the local crate. Instead, use
 /// `tcx.variances_of()` to get the variance for a *particular*
 /// item.
-pub struct CrateVariancesMap {
+pub struct CrateVariancesMap<'tcx> {
     /// For each item with generics, maps to a vector of the variance
     /// of its generics.  If an item has no generics, it will have no
     /// entry.
-    pub variances: FxHashMap<DefId, Lrc<Vec<ty::Variance>>>,
-
-    /// An empty vector, useful for cloning.
-    pub empty_variance: Lrc<Vec<ty::Variance>>,
+    pub variances: FxHashMap<DefId, &'tcx [ty::Variance]>,
 }
 
 impl Variance {
@@ -1087,6 +1119,8 @@ pub enum Predicate<'tcx> {
     ConstEvaluatable(DefId, &'tcx Substs<'tcx>),
 }
 
+impl_defer_dellocs_for_no_drop_type!([<'tcx>] Predicate<'tcx>);
+
 /// The crate outlives map is computed during typeck and contains the
 /// outlives of every item in the local crate. You should not use it
 /// directly, because to do so will make your pass dependent on the
@@ -1097,10 +1131,7 @@ pub struct CratePredicatesMap<'tcx> {
     /// For each struct with outlive bounds, maps to a vector of the
     /// predicate of its outlive bounds. If an item has no outlives
     /// bounds, it will have no entry.
-    pub predicates: FxHashMap<DefId, Lrc<Vec<ty::Predicate<'tcx>>>>,
-
-    /// An empty vector, useful for cloning.
-    pub empty_predicate: Lrc<Vec<ty::Predicate<'tcx>>>,
+    pub predicates: FxHashMap<DefId, &'tcx [ty::Predicate<'tcx>]>,
 }
 
 impl<'tcx> AsRef<Predicate<'tcx>> for Predicate<'tcx> {
@@ -1233,6 +1264,14 @@ impl<'tcx> PolyTraitPredicate<'tcx> {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct OutlivesPredicate<A,B>(pub A, pub B); // `A: B`
+
+unsafe impl<A: DeferDeallocs, B: DeferDeallocs> DeferDeallocs for OutlivesPredicate<A, B> {
+    fn defer(&self, deferred: &mut DeferredDeallocs) {
+        self.0.defer(deferred);
+        self.1.defer(deferred);
+    }
+}
+
 pub type PolyOutlivesPredicate<A,B> = ty::Binder<OutlivesPredicate<A,B>>;
 pub type RegionOutlivesPredicate<'tcx> = OutlivesPredicate<ty::Region<'tcx>,
                                                            ty::Region<'tcx>>;
@@ -1547,6 +1586,7 @@ newtype_index! {
     }
 }
 
+impl_defer_dellocs_for_no_drop_type!([] UniverseIndex);
 impl_stable_hash_for!(struct UniverseIndex { private });
 
 impl UniverseIndex {
@@ -2962,7 +3002,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
 pub struct AssociatedItemsIterator<'a, 'gcx: 'tcx, 'tcx: 'a> {
     tcx: TyCtxt<'a, 'gcx, 'tcx>,
-    def_ids: Lrc<Vec<DefId>>,
+    def_ids: &'gcx [DefId],
     next_index: usize,
 }
 
@@ -3048,7 +3088,7 @@ fn adt_sized_constraint<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
 fn associated_item_def_ids<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                      def_id: DefId)
-                                     -> Lrc<Vec<DefId>> {
+                                     -> &'tcx [DefId] {
     let id = tcx.hir.as_local_node_id(def_id).unwrap();
     let item = tcx.hir.expect_item(id);
     let vec: Vec<_> = match item.node {
@@ -3067,7 +3107,7 @@ fn associated_item_def_ids<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         hir::ItemKind::TraitAlias(..) => vec![],
         _ => span_bug!(item.span, "associated_item_def_ids: not impl or trait")
     };
-    Lrc::new(vec)
+    tcx.promote_vec(vec)
 }
 
 fn def_span<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Span {
@@ -3209,7 +3249,13 @@ pub fn provide(providers: &mut ty::query::Providers<'_>) {
 /// (constructing this map requires touching the entire crate).
 #[derive(Clone, Debug, Default)]
 pub struct CrateInherentImpls {
-    pub inherent_impls: DefIdMap<Lrc<Vec<DefId>>>,
+    pub inherent_impls: DefIdMap<Vec<DefId>>,
+}
+
+unsafe impl DeferDeallocs for CrateInherentImpls {
+    fn defer(&self, deferred: &mut DeferredDeallocs) {
+        self.inherent_impls.defer(deferred)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, RustcEncodable, RustcDecodable)]

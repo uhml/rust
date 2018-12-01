@@ -22,7 +22,7 @@ use rustc::middle::exported_symbols::ExportedSymbol;
 use rustc::middle::stability::DeprecationEntry;
 use rustc::hir::def;
 use rustc::session::{CrateDisambiguator, Session};
-use rustc::ty::{self, TyCtxt};
+use rustc::ty::{self, Bx, TyCtxt};
 use rustc::ty::query::Providers;
 use rustc::hir::def_id::{CrateNum, DefId, LOCAL_CRATE, CRATE_DEF_INDEX};
 use rustc::hir::map::{DefKey, DefPath, DefPathHash};
@@ -114,12 +114,12 @@ provide! { <'tcx> tcx, def_id, other, cdata,
         let _ = cdata;
         tcx.calculate_dtor(def_id, &mut |_,_| Ok(()))
     }
-    variances_of => { Lrc::new(cdata.get_item_variances(def_id.index)) }
+    variances_of => { tcx.promote_vec(cdata.get_item_variances(def_id.index)) }
     associated_item_def_ids => {
         let mut result = vec![];
         cdata.each_child_of_item(def_id.index,
           |child| result.push(child.def.def_id()), tcx.sess);
-        Lrc::new(result)
+        tcx.promote_vec(result)
     }
     associated_item => { cdata.get_associated_item(def_id.index) }
     impl_trait_ref => { cdata.get_impl_trait(def_id.index, tcx) }
@@ -139,10 +139,10 @@ provide! { <'tcx> tcx, def_id, other, cdata,
         mir
     }
     mir_const_qualif => {
-        (cdata.mir_const_qualif(def_id.index), Lrc::new(BitSet::new_empty(0)))
+        (cdata.mir_const_qualif(def_id.index), Bx(tcx.promote(BitSet::new_empty(0))))
     }
     fn_sig => { cdata.fn_sig(def_id.index, tcx) }
-    inherent_impls => { Lrc::new(cdata.get_inherent_implementations_for_type(def_id.index)) }
+    inherent_impls => { tcx.promote_vec(cdata.get_inherent_implementations_for_type(def_id.index)) }
     is_const_fn_raw => { cdata.is_const_fn_raw(def_id.index) }
     is_foreign_item => { cdata.is_foreign_item(def_id.index) }
     describe_def => { cdata.get_def(def_id.index) }
@@ -219,13 +219,13 @@ provide! { <'tcx> tcx, def_id, other, cdata,
         let mut result = vec![];
         let filter = Some(other);
         cdata.get_implementations_for_trait(filter, &mut result);
-        Lrc::new(result)
+        tcx.bx_vec(result)
     }
 
     all_trait_implementations => {
         let mut result = vec![];
         cdata.get_implementations_for_trait(None, &mut result);
-        Lrc::new(result)
+        tcx.bx_vec(result)
     }
 
     visibility => { cdata.get_visibility(def_id.index) }
@@ -237,7 +237,7 @@ provide! { <'tcx> tcx, def_id, other, cdata,
     item_children => {
         let mut result = vec![];
         cdata.each_child_of_item(def_id.index, |child| result.push(child), tcx.sess);
-        Lrc::new(result)
+        tcx.bx_vec(result)
     }
     defined_lib_features => { Lrc::new(cdata.get_lib_features()) }
     defined_lang_items => { Lrc::new(cdata.get_lang_items()) }
@@ -337,7 +337,7 @@ pub fn provide<'tcx>(providers: &mut Providers<'tcx>) {
             // which is to say, its not deterministic in general. But
             // we believe that libstd is consistently assigned crate
             // num 1, so it should be enough to resolve #46112.
-            let mut crates: Vec<CrateNum> = (*tcx.crates()).clone();
+            let mut crates: Vec<CrateNum> = (*tcx.crates()).to_owned();
             crates.sort();
 
             for &cnum in crates.iter() {
